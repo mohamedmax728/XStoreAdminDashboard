@@ -671,7 +671,7 @@ function packages(){
  const rows=PKGS.map((p,i)=>`<tr data-status="${p.status}">
    <td><b style="cursor:pointer" onclick="pkgDrawer(${i})">${p.id}</b></td>
    <td><div class="u" style="cursor:pointer" onclick="pkgDrawer(${i})">${avatar(p.customer,'50')}<div><b>${p.customer} ${(p.requesterRole==='vendor')?'<span class="badge-s b-indigo" style="padding:1px 7px">Vendor</span>':'<span class="badge-s b-blue" style="padding:1px 7px">Customer</span>'}</b><small>${p.phone}</small></div></div></td>
-   <td class="route"><b>${p.pickup.city} → ${p.drop.city}${pkgCross(p)?' <span class="badge-s b-amber" style="padding:1px 7px">cross-city</span>':''}</b><small>${p.pickup.street} → ${p.drop.street} (${p.drop.name})</small></td>
+   <td class="route"><b>${p.pickup.city} → ${p.drop.city}${pkgCross(p)?' <span class="badge-s b-amber" style="padding:1px 7px">cross-city</span>':''}${p.orderId?' <span class="badge-s b-indigo" style="padding:1px 7px" title="Linked to order '+p.orderId+'">🔗 order</span>':''}</b><small>${p.pickup.street} → ${p.drop.street} (${p.drop.name})</small></td>
    <td class="muted" style="max-width:200px;white-space:normal">${p.note}</td>
    <td class="muted">${p.submitted}</td>
    <td class="money">${p.price!=null?EGP(p.price):'—'}</td>
@@ -679,9 +679,9 @@ function packages(){
    <td class="r">${pkgActions(p,i)}</td></tr>`).join('');
  const info=`<div class="card mt"><div class="c-body" style="font-size:12.5px;line-height:1.7;color:var(--text-2)">
    <b style="color:var(--text)">How package delivery requests work</b>
-   <p style="margin-top:6px">A customer submits a pickup + destination. <b>You set the price</b> (reference: <b>EGP 60</b> base + <b>EGP 20</b> cross-city surcharge). The customer confirms and pays the courier <b>in cash at pickup</b>, then your assigned courier delivers the package. Lifecycle: <b>submitted → priced → confirmed → picked up → delivered</b>; cancelling is possible while submitted / priced.</p>
-   <p style="margin-top:8px">Pickup cash goes into the courier's <b>cash-in-hand wallet</b> — the same ledger as COD, counting toward the ${EGP(5000)} cap. Collect it from <a data-jump="couriers" style="color:var(--primary);cursor:pointer">Delivery</a> → Collect cash.</p>
-   <p style="margin-top:8px">Backend: <code>POST /delivery-requests</code> · <code>PUT /admin/delivery-requests/{id}/price</code> · <code>POST /delivery-requests/{id}/confirm</code> · <code>POST /admin/delivery-requests/{id}/assign-courier</code> · <code>POST /delivery-requests/{id}/pickup</code> / <code>…/deliver</code> · <code>POST /delivery-requests/{id}/cancel</code>.</p></div></div>`;
+   <p style="margin-top:6px">A customer — or a vendor, for an order whose pickup/drop-off doesn't fit its standard route (marked 🔗 order below) — submits a pickup + destination. <b>You set the price</b> (reference: <b>EGP 60</b> base + <b>EGP 20</b> cross-city surcharge). Lifecycle: <b>submitted → priced → confirmed → picked up → delivered</b>; the requester can cancel while submitted/priced, optionally with a reason.</p>
+   <p style="margin-top:8px"><b>Consumer requests</b> are paid cash-to-courier at pickup — that cash goes into the courier's <b>cash-in-hand wallet</b>, the same ledger as COD, counting toward the ${EGP(5000)} cap. <b>Vendor order-linked requests</b> are different: no cash changes hands — the price is deducted from the vendor's <b>delivery wallet</b> instead (open a vendor-raised request's details → "Vendor delivery wallet" to view/settle it).</p>
+   <p style="margin-top:8px">Backend: <code>POST /delivery-requests</code> · <code>PUT /admin/delivery-requests/{id}/price</code> · <code>POST /delivery-requests/{id}/confirm</code> · <code>POST /admin/delivery-requests/{id}/assign-courier</code> · <code>POST /delivery-requests/{id}/pickup</code> / <code>…/deliver</code> · <code>POST /delivery-requests/{id}/cancel</code> · <code>GET</code>/<code>POST /admin/vendors/{id}/delivery-wallet[/settle]</code>.</p></div></div>`;
  return `<div class="page-head"><div><h2>Delivery Requests</h2><p>Consumer package delivery ("send a package" pilot) · you set the price, the customer pays the courier <b>in cash at pickup</b></p></div>
    <div class="tabs"><span class="chip active">All</span><span class="chip">Submitted</span><span class="chip">Priced</span><span class="chip">Confirmed</span><span class="chip">Picked up</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div></div>
    ${deliveryConnectBar()}
@@ -738,12 +738,16 @@ function pkgDrawer(i){
  const steps=['Submitted','Priced','Confirmed','Picked up','Delivered'];
  const cur=steps.indexOf(PSTAT[p.status][1]);
  const tl=p.status==='cancelled'
-   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled'+(p.price!=null?' (was priced at '+EGP(p.price)+')':'')+'</span></div>'
+   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled'+(p.price!=null?' (was priced at '+EGP(p.price)+')':'')+(p.cancelReason?' — "'+esc(p.cancelReason)+'"':'')+'</span></div>'
    :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+s+(s==='Picked up'&&x<=cur?' — '+EGP(p.price)+' cash collected':'')+'</span></div>').join('');
+ const vendorWalletBtn=(p.requesterRole==='vendor'&&p.requesterId&&DELIVERY.connected)
+   ?'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="dlvVendorWalletDrawer(\''+p.requesterId+'\',\''+esc(p.customer)+'\')">Vendor delivery wallet</button>'
+   :'';
  openDrawer('Request '+p.id,
    kv('Status',PSTAT[p.status][1])+kv('Customer',p.customer)+kv('Phone',p.phone)
+   +(p.orderId?kv('Order','🔗 Linked to order <code>'+esc(p.orderId.length>10?p.orderId.slice(0,8):p.orderId)+'</code> — pickup/drop-off differ from that order\'s standard route'):'')
    +kv('Price',p.price!=null?EGP(p.price):'— not set yet')
-   +kv('Payment','Cash to courier at pickup')
+   +kv('Payment',p.requesterRole==='vendor'&&p.orderId?'Deducted from vendor\'s delivery wallet (not cash)':'Cash to courier at pickup')
    +(p.courier?kv('Courier','🚚 '+p.courier):'')
    +secH('Pickup')+'<p class="muted" style="font-size:13px">'+p.pickup.street+', '+p.pickup.city+'</p>'
    +secH('Drop-off')+'<p class="muted" style="font-size:13px">'+p.drop.street+', '+p.drop.city+' — '+p.drop.name+' ('+p.drop.phone+')</p>'
@@ -751,7 +755,25 @@ function pkgDrawer(i){
    +secH('Timeline')+tl,
    (p.status==='confirmed'?'<button class="btn btn-p" style="flex:1;justify-content:center" onclick="closeDrawer();assignPkgCourierDrawer('+i+')">'+(p.courier?'Reassign courier':'Assign courier')+'</button>':'')
    +((p.status==='submitted'||p.status==='priced')?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="closeDrawer();cancelPkg('+i+')">Cancel request</button>':'')
+   +vendorWalletBtn
    +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+}
+function dlvVendorWalletDrawer(vendorId,vendorName){
+ openDrawer('Delivery wallet — '+vendorName,stateLoading('Loading wallet…'),'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+ deliveryFetch('/api/admin/vendors/'+vendorId+'/delivery-wallet').then(w=>{
+   const owed=+w.owedEgp||0,n=+w.unsettledCount||0;
+   openDrawer('Delivery wallet — '+vendorName,
+     kv('Owed to platform',owed>0?'<span style="color:#B4472E">'+EGP(owed)+'</span>':EGP(0))
+     +kv('Unsettled delivery requests',n)
+     +'<p class="muted" style="font-size:12.5px;margin-top:10px">Deducted from vendor order-linked delivery requests that were delivered but not yet settled — see the <a data-jump="packages" style="color:var(--primary);cursor:pointer">Delivery Requests</a> list for the underlying requests.</p>',
+     (owed>0?'<button class="btn btn-ok" style="flex:1;justify-content:center" onclick="dlvSettleVendorWallet(\''+vendorId+'\',\''+esc(vendorName)+'\')">Mark settled</button>':'')
+     +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+ }).catch(e=>{openDrawer('Delivery wallet — '+vendorName,'<p style="color:var(--error);font-size:13px">'+esc(e.message)+'</p>','<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');});
+}
+function dlvSettleVendorWallet(vendorId,vendorName){
+ deliveryFetch('/api/admin/vendors/'+vendorId+'/delivery-wallet/settle',{method:'POST'}).then(()=>{
+   toast('Delivery wallet settled for '+vendorName+' ✓'); closeDrawer(); loadPackages();
+ }).catch(e=>toast(e.message));
 }
 
 function coupons(){
@@ -1579,11 +1601,12 @@ function courierNameById(id){const c=COURIERS.find(x=>x.apiId===id);return c?c.n
 function mapRequest(r){
  const pk=r.pickup||{},dp=r.dropoff||{};
  return {apiId:r.id,id:(r.id&&r.id.length>10)?r.id.slice(0,8):(r.id||'—'),
-  customer:r.consumerName||'—',phone:r.consumerPhone||'—',
+  customer:r.consumerName||'—',phone:r.consumerPhone||'—',requesterId:r.consumerId||null,
   pickup:{street:pk.street||'',city:pk.city||''},
   drop:{name:dp.fullName||'',phone:dp.phone||'',street:dp.street||'',city:dp.city||''},
   note:r.packageNote||'',submitted:_dlvAgo(r.createdAt),status:_DLV_PSTAT[r.status]||'submitted',
   requesterRole:(r.requesterRole==='vendor')?'vendor':'customer',
+  orderId:r.orderId||null,cancelReason:r.cancelReason||null,
   price:r.price!=null?+r.price:null,courier:r.courierId?(courierNameById(r.courierId)||'Courier'):null,courierId:r.courierId||null};
 }
 

@@ -82,6 +82,19 @@ at pickup and delivers. Lifecycle: `submitted → priced → confirmed → picke
 > Mock pricing reference the prototype shows the admin (backend need not replicate): `60` base
 > `+ 20` when pickup and dropoff cities differ. The real price is whatever the admin types.
 
+> **Implemented (2026-08-06), real routes differ slightly from the spec above** — see
+> `github.com/AhmedElemey/delivery-backend`'s own README for the authoritative contract
+> (`/api/delivery-requests/*`, `/api/admin/*`, price body is `{price}` not `{priceEgp}`, cancel
+> is requester-only not admin). Two additions this dashboard now uses:
+> - `orderId` (nullable) on `DeliveryRequest` — set when a **vendor** raises the request against
+>   an existing order whose pickup/drop-off doesn't fit the order's standard route. Shown as a
+>   🔗 badge in the Delivery Requests table/drawer.
+> - Vendor requests are **not** cash-at-pickup — their price is deducted from a vendor delivery
+>   wallet instead, settled via `GET`/`POST /api/admin/vendors/{vendorId}/delivery-wallet[/settle]`
+>   (derived from delivered, unsettled order-linked requests — same "sum of rows" pattern as the
+>   courier cash wallet, no separate ledger table). Reachable from a vendor-raised request's
+>   drawer → "Vendor delivery wallet".
+
 ### Disputes  (`disputes()`, `disputeDrawer()`)
 - `GET /admin/disputes?status=`
 - `POST /admin/disputes/{id}/resolve` body `{ resolution: "refund"|"partial"|"reject" }`
