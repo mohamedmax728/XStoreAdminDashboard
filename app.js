@@ -131,7 +131,7 @@ const ORDERS=[
  {id:'XS-2026-4466',buyer:'Nour Ibrahim',phone:'+20 105 666 7788',addr:'40 Haram St, Giza',vendor:'Zamalek Boutique',status:'delivered',items:[['Silk Scarf',3,1250]]},
  {id:'XS-2026-4465',buyer:'Omar Sherif',phone:'+20 106 777 8899',addr:'7 Roxy Sq, Heliopolis, Cairo',vendor:'Heliopolis Sportswear',status:'cancelled',items:[['Running Shoes',1,890]]}];
 const orderTotal=o=>o.items.reduce((s,it)=>s+it[1]*it[2],0);
-const OSTAT={pending:['b-grey','Pending'],confirmed:['b-blue','Confirmed'],processing:['b-indigo','Processing'],shipped:['b-amber','Shipped'],delivered:['b-green','Delivered'],cancelled:['b-red','Cancelled']};
+const OSTAT={pending:['b-grey','Pending'],confirmed:['b-blue','Confirmed'],processing:['b-indigo','Processing'],shipped:['b-amber','Shipped'],delivered:['b-green','Delivered'],cancelled:['b-red','Cancelled'],refunded:['b-red','Refunded']};
 const DISPUTES=[
  {id:'XS-2026-4402',buyer:'Layla Kamal',vendor:'Giza Gadgets',reason:'Item not as described',val:720,status:'open',note:'Buyer says the earbuds are a different model than listed. Photos attached to the claim.',sug:'Refund buyer'},
  {id:'XS-2026-4388',buyer:'Tarek Nabil',vendor:'Cairo Tech Hub',reason:'COD refused on delivery',val:48999,status:'open',note:'Customer refused the parcel at the door; vendor requests restocking cover for the failed COD delivery.',sug:'Reject claim (COD refusal)'},
@@ -231,24 +231,23 @@ function categories(){
    <div id="catHost">${stateLoading('Loading categories…')}</div>`;
 }
 
-/* which orders can still be handed to a platform courier */
-const courierAssignable=o=>!o.courier&&['confirmed','processing'].indexOf(o.status)>-1;
-function deliveryCell(o,i){
- if(o.courier) return `<span class="badge-s b-indigo" title="Delivered by xStore">🚚 ${o.courier.split(' ')[0]}</span>`;
- if(courierAssignable(o)) return `<button class="btn btn-g btn-sm" onclick="assignCourierDrawer(${i})">Assign</button>`;
+/* which orders can still be handed to a platform courier — deliveryMethod
+   and courierId are the real fields from GET /api/orders/admin, not an
+   inferred courier-name presence check. */
+const ORDER_TERMINAL_STATUSES=['delivered','cancelled','refunded'];
+const courierAssignable=m=>m.deliveryMethod==='platform'&&!m.courierId&&!ORDER_TERMINAL_STATUSES.includes(m.status);
+function deliveryCell(m,i){
+ if(m.courierId) return `<span class="badge-s b-indigo" title="Delivered by xStore">🚚 ${esc((m.courierName||'Courier').split(' ')[0])}</span>`;
+ if(courierAssignable(m)) return `<button class="btn btn-g btn-sm" onclick="assignCourierDrawer(${i})">Assign</button>`;
+ if(m.deliveryMethod==='platform') return '<span class="muted" style="font-size:12px">—</span>';
  return '<span class="muted" style="font-size:12px">Vendor</span>';
 }
+const ORDER_STATUS_TABS=[['All',''],['Pending','Pending'],['Confirmed','Confirmed'],['Processing','Processing'],['Shipped','Shipped'],['Delivered','Delivered'],['Cancelled','Cancelled']];
 function orders(){
- const rows=ORDERS.map((o,i)=>`<tr data-status="${o.status}"><td><b>${o.id}</b></td><td><div class="u">${avatar(o.buyer)}<b>${o.buyer}</b></div></td>
-   <td class="muted">${o.vendor}</td><td class="money">${EGP(orderTotal(o))}</td><td><span class="badge-s b-grey">COD</span></td>
-   <td>${deliveryCell(o,i)}</td>
-   <td><span class="badge-s ${OSTAT[o.status][0]}">${OSTAT[o.status][1]}</span></td><td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`).join('');
- return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery · 🚚 = Delivered by xStore</p></div>
-   <div class="tabs" id="ordTabs"><span class="chip active">All</span><span class="chip">Pending</span><span class="chip">Processing</span><span class="chip">Shipped</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div></div>
-   <div class="grid g-4" style="margin-bottom:18px">
-     ${kpi('box','3,482','Total orders','','up','#2E5C6E')}${kpi('chart','EGP 356','Avg order value','+3%','up','#3F7A5C')}
-     ${kpi('alert','12%','COD refusal rate','watch','down','#C68A2E')}${kpi('shield','98.1%','Fulfillment rate','+1%','up','#356F80')}</div>
-   <div class="card"><table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th class="r"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+ const tabs=ORDER_STATUS_TABS.map((t,i)=>`<span class="chip${i===0?' active':''}">${t[0]}</span>`).join('');
+ return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery · 🚚 = Delivered by xStore</p></div></div>
+   <div class="tabs" data-remote="orders" style="margin-bottom:18px">${tabs}</div>
+   <div class="card"><div id="ordersHost">${stateLoading('Loading orders…')}</div></div>`;
 }
 
 function disputes(){
@@ -349,20 +348,26 @@ function openCourierForm(){formDrawer('Add courier (owner-created account)',
  [{label:'Full name',ph:'Courier name',required:true},{label:'Phone',ph:'+20 1xx xxx xxxx',required:true},{label:'Zone',ph:'e.g. Cairo — Maadi',required:true}],
  'Create courier',v=>{if(DELIVERY.connected)return dlvCreateCourier(v[0],v[1],v[2]);COURIERS.push({n:v[0],phone:v[1],zone:v[2],status:'active',cash:0,cap:5000,today:0,delivered30:0,failed30:0,joined:'Jul 2026'});toast('Courier "'+v[0]+'" created ✓ — share the login with them');closeDrawer();go('couriers');});}
 function assignCourierDrawer(i){
- const o=ORDERS[i];
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
  const rows=COURIERS.map((c,ci)=>{
    const off=c.status!=='active',due=cashDue(c);
    const right=off?'<span class="badge-s b-grey">Off duty</span>'
      :due?'<span class="badge-s b-red">Cash cap</span>'
      :`<button class="btn btn-p btn-sm" onclick="assignCourier(${i},${ci})">Assign</button>`;
    return `<div class="list-row">${avatar(c.n,'50')}<div style="flex:1"><b>${c.n}</b><small class="muted">${c.zone} · ${c.today} tasks today · holding ${EGP(c.cash)}</small></div>${right}</div>`;}).join('');
- openDrawer('Assign courier — '+o.id,
-   '<p class="muted" style="font-size:12.5px;margin-bottom:10px">Order will switch to <b>Delivered by xStore</b>: the courier collects '+EGP(orderTotal(o))+' COD and the vendor is paid net of commission. Couriers at their cash cap must deposit first.</p>'+rows);
+ openDrawer('Assign courier — '+m.orderNo,
+   '<p class="muted" style="font-size:12.5px;margin-bottom:10px">Order will switch to <b>Delivered by xStore</b>: the courier collects '+EGP(m.total)+' COD and the vendor is paid net of commission. Couriers at their cash cap must deposit first.</p>'+rows);
 }
-function assignCourier(i,ci){
- ORDERS[i].courier=COURIERS[ci].n;COURIERS[ci].today++;
- toast('Order assigned to '+COURIERS[ci].n+' ✓');
- closeDrawer();go('orders');
+async function assignCourier(i,ci){
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
+ const c=COURIERS[ci];
+ const courierId=c.apiId||('demo-'+ci);
+ try{
+   await apiFetch('/api/orders/'+encodeURIComponent(m.apiId)+'/assign-courier',{method:'PUT',body:{courierId,courierName:c.n}});
+   c.today++;
+   toast('Order assigned to '+c.n+' ✓');
+   closeDrawer();loadOrders();
+ }catch(e){ if(e.status===401)return; toast('Assign failed: '+(e.message||'error')); }
 }
 
 /* ---------- delivery requests (consumer package pilot) ---------- */
@@ -395,7 +400,7 @@ function packages(){
  const rows=PKGS.map((p,i)=>`<tr data-status="${p.status}">
    <td><b style="cursor:pointer" onclick="pkgDrawer(${i})">${p.id}</b></td>
    <td><div class="u" style="cursor:pointer" onclick="pkgDrawer(${i})">${avatar(p.customer,'50')}<div><b>${p.customer} ${(p.requesterRole==='vendor')?'<span class="badge-s b-indigo" style="padding:1px 7px">Vendor</span>':'<span class="badge-s b-blue" style="padding:1px 7px">Customer</span>'}</b><small>${p.phone}</small></div></div></td>
-   <td class="route"><b>${p.pickup.city} → ${p.drop.city}${pkgCross(p)?' <span class="badge-s b-amber" style="padding:1px 7px">cross-city</span>':''}</b><small>${p.pickup.street} → ${p.drop.street} (${p.drop.name})</small></td>
+   <td class="route"><b>${p.pickup.city} → ${p.drop.city}${pkgCross(p)?' <span class="badge-s b-amber" style="padding:1px 7px">cross-city</span>':''}${p.orderId?' <span class="badge-s b-indigo" style="padding:1px 7px" title="Linked to order '+p.orderId+'">🔗 order</span>':''}</b><small>${p.pickup.street} → ${p.drop.street} (${p.drop.name})</small></td>
    <td class="muted" style="max-width:200px;white-space:normal">${p.note}</td>
    <td class="muted">${p.submitted}</td>
    <td class="money">${p.price!=null?EGP(p.price):'—'}</td>
@@ -403,9 +408,9 @@ function packages(){
    <td class="r">${pkgActions(p,i)}</td></tr>`).join('');
  const info=`<div class="card mt"><div class="c-body" style="font-size:12.5px;line-height:1.7;color:var(--text-2)">
    <b style="color:var(--text)">How package delivery requests work</b>
-   <p style="margin-top:6px">A customer submits a pickup + destination. <b>You set the price</b> (reference: <b>EGP 60</b> base + <b>EGP 20</b> cross-city surcharge). The customer confirms and pays the courier <b>in cash at pickup</b>, then your assigned courier delivers the package. Lifecycle: <b>submitted → priced → confirmed → picked up → delivered</b>; cancelling is possible while submitted / priced.</p>
-   <p style="margin-top:8px">Pickup cash goes into the courier's <b>cash-in-hand wallet</b> — the same ledger as COD, counting toward the ${EGP(5000)} cap. Collect it from <a data-jump="couriers" style="color:var(--primary);cursor:pointer">Delivery</a> → Collect cash.</p>
-   <p style="margin-top:8px">Backend: <code>POST /delivery-requests</code> · <code>PUT /admin/delivery-requests/{id}/price</code> · <code>POST /delivery-requests/{id}/confirm</code> · <code>POST /admin/delivery-requests/{id}/assign-courier</code> · <code>POST /delivery-requests/{id}/pickup</code> / <code>…/deliver</code> · <code>POST /delivery-requests/{id}/cancel</code>.</p></div></div>`;
+   <p style="margin-top:6px">A customer — or a vendor, for an order whose pickup/drop-off doesn't fit its standard route (marked 🔗 order below) — submits a pickup + destination. <b>You set the price</b> (reference: <b>EGP 60</b> base + <b>EGP 20</b> cross-city surcharge). Lifecycle: <b>submitted → priced → confirmed → picked up → delivered</b>; the requester can cancel while submitted/priced, optionally with a reason.</p>
+   <p style="margin-top:8px"><b>Consumer requests</b> are paid cash-to-courier at pickup — that cash goes into the courier's <b>cash-in-hand wallet</b>, the same ledger as COD, counting toward the ${EGP(5000)} cap. <b>Vendor order-linked requests</b> are different: no cash changes hands — the price is deducted from the vendor's <b>delivery wallet</b> instead (open a vendor-raised request's details → "Vendor delivery wallet" to view/settle it).</p>
+   <p style="margin-top:8px">Backend: <code>POST /delivery-requests</code> · <code>PUT /admin/delivery-requests/{id}/price</code> · <code>POST /delivery-requests/{id}/confirm</code> · <code>POST /admin/delivery-requests/{id}/assign-courier</code> · <code>POST /delivery-requests/{id}/pickup</code> / <code>…/deliver</code> · <code>POST /delivery-requests/{id}/cancel</code> · <code>GET</code>/<code>POST /admin/vendors/{id}/delivery-wallet[/settle]</code>.</p></div></div>`;
  return `<div class="page-head"><div><h2>Delivery Requests</h2><p>Consumer package delivery ("send a package" pilot) · you set the price, the customer pays the courier <b>in cash at pickup</b></p></div>
    <div class="tabs"><span class="chip active">All</span><span class="chip">Submitted</span><span class="chip">Priced</span><span class="chip">Confirmed</span><span class="chip">Picked up</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div></div>
    ${deliveryConnectBar()}
@@ -462,12 +467,16 @@ function pkgDrawer(i){
  const steps=['Submitted','Priced','Confirmed','Picked up','Delivered'];
  const cur=steps.indexOf(PSTAT[p.status][1]);
  const tl=p.status==='cancelled'
-   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled'+(p.price!=null?' (was priced at '+EGP(p.price)+')':'')+'</span></div>'
+   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled'+(p.price!=null?' (was priced at '+EGP(p.price)+')':'')+(p.cancelReason?' — "'+esc(p.cancelReason)+'"':'')+'</span></div>'
    :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+s+(s==='Picked up'&&x<=cur?' — '+EGP(p.price)+' cash collected':'')+'</span></div>').join('');
+ const vendorWalletBtn=(p.requesterRole==='vendor'&&p.requesterId&&DELIVERY.connected)
+   ?'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="dlvVendorWalletDrawer(\''+p.requesterId+'\',\''+esc(p.customer)+'\')">Vendor delivery wallet</button>'
+   :'';
  openDrawer('Request '+p.id,
    kv('Status',PSTAT[p.status][1])+kv('Customer',p.customer)+kv('Phone',p.phone)
+   +(p.orderId?kv('Order','🔗 Linked to order <code>'+esc(p.orderId.length>10?p.orderId.slice(0,8):p.orderId)+'</code> — pickup/drop-off differ from that order\'s standard route'):'')
    +kv('Price',p.price!=null?EGP(p.price):'— not set yet')
-   +kv('Payment','Cash to courier at pickup')
+   +kv('Payment',p.requesterRole==='vendor'&&p.orderId?'Deducted from vendor\'s delivery wallet (not cash)':'Cash to courier at pickup')
    +(p.courier?kv('Courier','🚚 '+p.courier):'')
    +secH('Pickup')+'<p class="muted" style="font-size:13px">'+p.pickup.street+', '+p.pickup.city+'</p>'
    +secH('Drop-off')+'<p class="muted" style="font-size:13px">'+p.drop.street+', '+p.drop.city+' — '+p.drop.name+' ('+p.drop.phone+')</p>'
@@ -475,7 +484,25 @@ function pkgDrawer(i){
    +secH('Timeline')+tl,
    (p.status==='confirmed'?'<button class="btn btn-p" style="flex:1;justify-content:center" onclick="closeDrawer();assignPkgCourierDrawer('+i+')">'+(p.courier?'Reassign courier':'Assign courier')+'</button>':'')
    +((p.status==='submitted'||p.status==='priced')?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="closeDrawer();cancelPkg('+i+')">Cancel request</button>':'')
+   +vendorWalletBtn
    +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+}
+function dlvVendorWalletDrawer(vendorId,vendorName){
+ openDrawer('Delivery wallet — '+vendorName,stateLoading('Loading wallet…'),'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+ deliveryFetch('/api/admin/vendors/'+vendorId+'/delivery-wallet').then(w=>{
+   const owed=+w.owedEgp||0,n=+w.unsettledCount||0;
+   openDrawer('Delivery wallet — '+vendorName,
+     kv('Owed to platform',owed>0?'<span style="color:#B4472E">'+EGP(owed)+'</span>':EGP(0))
+     +kv('Unsettled delivery requests',n)
+     +'<p class="muted" style="font-size:12.5px;margin-top:10px">Deducted from vendor order-linked delivery requests that were delivered but not yet settled — see the <a data-jump="packages" style="color:var(--primary);cursor:pointer">Delivery Requests</a> list for the underlying requests.</p>',
+     (owed>0?'<button class="btn btn-ok" style="flex:1;justify-content:center" onclick="dlvSettleVendorWallet(\''+vendorId+'\',\''+esc(vendorName)+'\')">Mark settled</button>':'')
+     +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+ }).catch(e=>{openDrawer('Delivery wallet — '+vendorName,'<p style="color:var(--error);font-size:13px">'+esc(e.message)+'</p>','<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');});
+}
+function dlvSettleVendorWallet(vendorId,vendorName){
+ deliveryFetch('/api/admin/vendors/'+vendorId+'/delivery-wallet/settle',{method:'POST'}).then(()=>{
+   toast('Delivery wallet settled for '+vendorName+' ✓'); closeDrawer(); loadPackages();
+ }).catch(e=>toast(e.message));
 }
 
 function coupons(){
@@ -546,7 +573,7 @@ function go(v){
  if(AFTER[v]) AFTER[v]();          // views backed by live data load after render
 }
 /* post-render loaders for live-data views (see LIVE API section below) */
-const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,couriers:loadCouriers,packages:loadPackages};
+const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,couriers:loadCouriers,packages:loadPackages,orders:loadOrders};
 document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>go(a.dataset.view));
 
 /* ---------- toast + moderation ---------- */
@@ -564,21 +591,21 @@ const cellTxt=(tr,i)=>tr.children[i]?tr.children[i].innerText.trim():'';
 const kv=(k,v)=>'<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>';
 const secH=t=>'<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);margin:16px 0 4px">'+t+'</h3>';
 function orderDrawer(i){
- const o=ORDERS[i];
- const items=o.items.map(it=>kv(it[0]+' × '+it[1], EGP(it[1]*it[2]))).join('');
- const steps=['Pending','Confirmed','Processing','Shipped','Delivered'];
- const cur=steps.indexOf(OSTAT[o.status][1]);
- const tl=o.status==='cancelled'
-   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled</span></div>'
-   :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+s+'</span></div>').join('');
- const canCancel=['pending','confirmed','processing'].indexOf(o.status)>-1;
- const assignBtn=courierAssignable(o)
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
+ const items=m.items.map(it=>kv(esc(it.listingName||'Item')+' × '+(it.quantity||1), EGP(it.total||0))).join('');
+ const steps=['pending','confirmed','processing','shipped','delivered'];
+ const cur=steps.indexOf(m.status);
+ const tl=m.status==='cancelled'||m.status==='refunded'
+   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">'+esc(OSTAT[m.status]?OSTAT[m.status][1]:m.status)+'</span></div>'
+   :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+esc(OSTAT[s][1])+'</span></div>').join('');
+ const canCancel=['pending','confirmed','processing'].indexOf(m.status)>-1;
+ const assignBtn=courierAssignable(m)
    ?'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer();assignCourierDrawer('+i+')">Assign courier</button>':'';
- openDrawer('Order '+o.id,
-   kv('Status',OSTAT[o.status][1])+kv('Buyer (customer)',o.buyer)+kv('Phone',o.phone)+kv('Vendor (business)',o.vendor)+kv('Payment','Cash on Delivery')
-   +kv('Delivery',o.courier?'🚚 Delivered by xStore — '+o.courier:'Vendor self-delivery')
-   +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+o.addr+'</p>'
-   +secH('Items')+items+kv('<b>Total</b>','<b>'+EGP(orderTotal(o))+'</b>')
+ openDrawer('Order '+m.orderNo,
+   kv('Status',OSTAT[m.status]?OSTAT[m.status][1]:m.status)+kv('Buyer (customer)',esc(m.buyer))+kv('Phone',esc(m.phone))+kv('Vendor (business)',esc(m.vendor))+kv('Payment','Cash on Delivery')
+   +kv('Delivery',m.courierId?'🚚 Delivered by xStore — '+esc(m.courierName||''):m.deliveryMethod==='platform'?'Delivered by xStore — awaiting courier':'Vendor self-delivery')
+   +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+esc(m.addr)+'</p>'
+   +secH('Items')+items+kv('<b>Total</b>','<b>'+EGP(m.total)+'</b>')
    +secH('Fulfilment timeline')+tl,
    '<button class="btn btn-p" style="flex:1;justify-content:center" onclick="toast(\'Message sent to vendor\');closeDrawer()">Contact vendor</button>'+assignBtn
    +(canCancel?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="toast(\'Order cancelled\');closeDrawer()">Cancel order</button>':'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>'));
@@ -1061,8 +1088,8 @@ function readPage(data,pageSize){
  return{items,total,totalPages};
 }
 function pager(kind){
- const st=kind==='users'?usersState:vendorsState;
- const fn=kind==='users'?'gotoUsersPage':'gotoVendorsPage';
+ const st=kind==='users'?usersState:kind==='orders'?ordersState:vendorsState;
+ const fn=kind==='users'?'gotoUsersPage':kind==='orders'?'gotoOrdersPage':'gotoVendorsPage';
  const from=st.total===0?0:(st.page-1)*st.pageSize+1, to=Math.min(st.page*st.pageSize,st.total);
  return '<div class="pager"><span>'+from+'–'+to+' of '+st.total.toLocaleString('en-US')+'</span>'
    +'<div class="pg-btns">'
@@ -1076,6 +1103,10 @@ function onRemoteChip(kind,chip){
  if(kind==='vendors'){
    const t=VENDOR_STATUS_TABS.find(x=>x[0]===label);
    vendorsState.vendorStatus=t?t[1]:''; vendorsState.statusLabel=label; vendorsState.page=1; loadVendors();
+ }
+ if(kind==='orders'){
+   const t=ORDER_STATUS_TABS.find(x=>x[0]===label);
+   ordersState.status=t?t[1]:''; ordersState.statusLabel=label; ordersState.page=1; loadOrders();
  }
 }
 
@@ -1217,6 +1248,51 @@ async function vendorDecision(i,action){
  }catch(e){ if(e.status===401)return; toast((action==='approve'?'Approve':'Reject')+' failed: '+(e.message||'error')); }
 }
 
+/* ---------- Orders (live GET /api/orders/admin) ---------- */
+const ordersState={status:'',statusLabel:'All',page:1,pageSize:20,total:0,totalPages:1,items:null};
+function gotoOrdersPage(p){if(p<1||p>ordersState.totalPages||p===ordersState.page)return;ordersState.page=p;loadOrders();}
+async function loadOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ host.innerHTML=stateLoading('Loading orders…');
+ try{
+   const data=await apiFetch('/api/orders/admin',{query:{status:ordersState.status,page:ordersState.page,pageSize:ordersState.pageSize}});
+   const p=readPage(data,ordersState.pageSize);
+   ordersState.items=p.items; ordersState.total=p.total; ordersState.totalPages=p.totalPages;
+   renderOrders();
+ }catch(e){ if(e.status===401)return; host.innerHTML=stateError(e.message,'loadOrders()'); }
+}
+function mapOrder(o){
+ if(!o)return{apiId:null};
+ const addr=o.deliveryAddress||{};
+ const status=String(o.status||'pending').toLowerCase();
+ return{
+   apiId:_fne(o.id,o.orderId,o._id),
+   orderNo:'XS-'+_fne(o.id,o.orderId,o._id),
+   buyer:_fne(o.consumerName)||'—',
+   phone:_fne(o.consumerPhone)||'—',
+   addr:[addr.street,addr.city,addr.wilaya].filter(Boolean).join(', ')||'—',
+   vendor:_fne(o.vendorStoreName,o.vendorName)||'—',
+   total:_numOr(o.total)||0,
+   status:OSTAT[status]?status:'pending',
+   deliveryMethod:String(o.deliveryMethod||'').toLowerCase(),
+   courierId:_fne(o.courierId)||null,
+   courierName:_fne(o.courierName)||null,
+   items:Array.isArray(o.items)?o.items:[]
+ };
+}
+function renderOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ const items=ordersState.items||[];
+ if(!items.length){host.innerHTML=stateEmpty('No orders with status “'+esc(ordersState.statusLabel)+'”.');return;}
+ const rows=items.map((o,i)=>{const m=mapOrder(o);
+   return `<tr data-status="${m.status}"><td><b>${esc(m.orderNo)}</b></td><td><div class="u">${avatar(m.buyer)}<b>${esc(m.buyer)}</b></div></td>
+     <td class="muted">${esc(m.vendor)}</td><td class="money">${EGP(m.total)}</td><td><span class="badge-s b-grey">COD</span></td>
+     <td>${deliveryCell(m,i)}</td>
+     <td><span class="badge-s ${OSTAT[m.status][0]}">${OSTAT[m.status][1]}</span></td><td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`;
+ }).join('');
+ host.innerHTML='<table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th class="r"></th></tr></thead><tbody>'+rows+'</tbody></table>'+pager('orders');
+}
+
 /* ---------- delegated clicks (wires every CTA) ---------- */
 document.addEventListener('click',e=>{
  const jump=e.target.closest('[data-jump]'); if(jump){go(jump.dataset.jump);return;}
@@ -1303,11 +1379,12 @@ function courierNameById(id){const c=COURIERS.find(x=>x.apiId===id);return c?c.n
 function mapRequest(r){
  const pk=r.pickup||{},dp=r.dropoff||{};
  return {apiId:r.id,id:(r.id&&r.id.length>10)?r.id.slice(0,8):(r.id||'—'),
-  customer:r.consumerName||'—',phone:r.consumerPhone||'—',
+  customer:r.consumerName||'—',phone:r.consumerPhone||'—',requesterId:r.consumerId||null,
   pickup:{street:pk.street||'',city:pk.city||''},
   drop:{name:dp.fullName||'',phone:dp.phone||'',street:dp.street||'',city:dp.city||''},
   note:r.packageNote||'',submitted:_dlvAgo(r.createdAt),status:_DLV_PSTAT[r.status]||'submitted',
   requesterRole:(r.requesterRole==='vendor')?'vendor':'customer',
+  orderId:r.orderId||null,cancelReason:r.cancelReason||null,
   price:r.price!=null?+r.price:null,courier:r.courierId?(courierNameById(r.courierId)||'Courier'):null,courierId:r.courierId||null};
 }
 
