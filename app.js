@@ -131,7 +131,7 @@ const ORDERS=[
  {id:'XS-2026-4466',buyer:'Nour Ibrahim',phone:'+20 105 666 7788',addr:'40 Haram St, Giza',vendor:'Zamalek Boutique',status:'delivered',items:[['Silk Scarf',3,1250]]},
  {id:'XS-2026-4465',buyer:'Omar Sherif',phone:'+20 106 777 8899',addr:'7 Roxy Sq, Heliopolis, Cairo',vendor:'Heliopolis Sportswear',status:'cancelled',items:[['Running Shoes',1,890]]}];
 const orderTotal=o=>o.items.reduce((s,it)=>s+it[1]*it[2],0);
-const OSTAT={pending:['b-grey','Pending'],confirmed:['b-blue','Confirmed'],processing:['b-indigo','Processing'],shipped:['b-amber','Shipped'],delivered:['b-green','Delivered'],cancelled:['b-red','Cancelled']};
+const OSTAT={pending:['b-grey','Pending'],confirmed:['b-blue','Confirmed'],processing:['b-indigo','Processing'],shipped:['b-amber','Shipped'],delivered:['b-green','Delivered'],cancelled:['b-red','Cancelled'],refunded:['b-red','Refunded']};
 const DISPUTES=[
  {id:'XS-2026-4402',buyer:'Layla Kamal',vendor:'Giza Gadgets',reason:'Item not as described',val:720,status:'open',note:'Buyer says the earbuds are a different model than listed. Photos attached to the claim.',sug:'Refund buyer'},
  {id:'XS-2026-4388',buyer:'Tarek Nabil',vendor:'Cairo Tech Hub',reason:'COD refused on delivery',val:48999,status:'open',note:'Customer refused the parcel at the door; vendor requests restocking cover for the failed COD delivery.',sug:'Reject claim (COD refusal)'},
@@ -231,24 +231,23 @@ function categories(){
    <div id="catHost">${stateLoading('Loading categories…')}</div>`;
 }
 
-/* which orders can still be handed to a platform courier */
-const courierAssignable=o=>!o.courier&&['confirmed','processing'].indexOf(o.status)>-1;
-function deliveryCell(o,i){
- if(o.courier) return `<span class="badge-s b-indigo" title="Delivered by xStore">🚚 ${o.courier.split(' ')[0]}</span>`;
- if(courierAssignable(o)) return `<button class="btn btn-g btn-sm" onclick="assignCourierDrawer(${i})">Assign</button>`;
+/* which orders can still be handed to a platform courier — deliveryMethod
+   and courierId are the real fields from GET /api/orders/admin, not an
+   inferred courier-name presence check. */
+const ORDER_TERMINAL_STATUSES=['delivered','cancelled','refunded'];
+const courierAssignable=m=>m.deliveryMethod==='platform'&&!m.courierId&&!ORDER_TERMINAL_STATUSES.includes(m.status);
+function deliveryCell(m,i){
+ if(m.courierId) return `<span class="badge-s b-indigo" title="Delivered by xStore">🚚 ${esc((m.courierName||'Courier').split(' ')[0])}</span>`;
+ if(courierAssignable(m)) return `<button class="btn btn-g btn-sm" onclick="assignCourierDrawer(${i})">Assign</button>`;
+ if(m.deliveryMethod==='platform') return '<span class="muted" style="font-size:12px">—</span>';
  return '<span class="muted" style="font-size:12px">Vendor</span>';
 }
+const ORDER_STATUS_TABS=[['All',''],['Pending','Pending'],['Confirmed','Confirmed'],['Processing','Processing'],['Shipped','Shipped'],['Delivered','Delivered'],['Cancelled','Cancelled']];
 function orders(){
- const rows=ORDERS.map((o,i)=>`<tr data-status="${o.status}"><td><b>${o.id}</b></td><td><div class="u">${avatar(o.buyer)}<b>${o.buyer}</b></div></td>
-   <td class="muted">${o.vendor}</td><td class="money">${EGP(orderTotal(o))}</td><td><span class="badge-s b-grey">COD</span></td>
-   <td>${deliveryCell(o,i)}</td>
-   <td><span class="badge-s ${OSTAT[o.status][0]}">${OSTAT[o.status][1]}</span></td><td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`).join('');
- return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery · 🚚 = Delivered by xStore</p></div>
-   <div class="tabs" id="ordTabs"><span class="chip active">All</span><span class="chip">Pending</span><span class="chip">Processing</span><span class="chip">Shipped</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div></div>
-   <div class="grid g-4" style="margin-bottom:18px">
-     ${kpi('box','3,482','Total orders','','up','#2E5C6E')}${kpi('chart','EGP 356','Avg order value','+3%','up','#3F7A5C')}
-     ${kpi('alert','12%','COD refusal rate','watch','down','#C68A2E')}${kpi('shield','98.1%','Fulfillment rate','+1%','up','#356F80')}</div>
-   <div class="card"><table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th class="r"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+ const tabs=ORDER_STATUS_TABS.map((t,i)=>`<span class="chip${i===0?' active':''}">${t[0]}</span>`).join('');
+ return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery · 🚚 = Delivered by xStore</p></div></div>
+   <div class="tabs" data-remote="orders" style="margin-bottom:18px">${tabs}</div>
+   <div class="card"><div id="ordersHost">${stateLoading('Loading orders…')}</div></div>`;
 }
 
 function disputes(){
@@ -349,20 +348,26 @@ function openCourierForm(){formDrawer('Add courier (owner-created account)',
  [{label:'Full name',ph:'Courier name',required:true},{label:'Phone',ph:'+20 1xx xxx xxxx',required:true},{label:'Zone',ph:'e.g. Cairo — Maadi',required:true}],
  'Create courier',v=>{if(DELIVERY.connected)return dlvCreateCourier(v[0],v[1],v[2]);COURIERS.push({n:v[0],phone:v[1],zone:v[2],status:'active',cash:0,cap:5000,today:0,delivered30:0,failed30:0,joined:'Jul 2026'});toast('Courier "'+v[0]+'" created ✓ — share the login with them');closeDrawer();go('couriers');});}
 function assignCourierDrawer(i){
- const o=ORDERS[i];
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
  const rows=COURIERS.map((c,ci)=>{
    const off=c.status!=='active',due=cashDue(c);
    const right=off?'<span class="badge-s b-grey">Off duty</span>'
      :due?'<span class="badge-s b-red">Cash cap</span>'
      :`<button class="btn btn-p btn-sm" onclick="assignCourier(${i},${ci})">Assign</button>`;
    return `<div class="list-row">${avatar(c.n,'50')}<div style="flex:1"><b>${c.n}</b><small class="muted">${c.zone} · ${c.today} tasks today · holding ${EGP(c.cash)}</small></div>${right}</div>`;}).join('');
- openDrawer('Assign courier — '+o.id,
-   '<p class="muted" style="font-size:12.5px;margin-bottom:10px">Order will switch to <b>Delivered by xStore</b>: the courier collects '+EGP(orderTotal(o))+' COD and the vendor is paid net of commission. Couriers at their cash cap must deposit first.</p>'+rows);
+ openDrawer('Assign courier — '+m.orderNo,
+   '<p class="muted" style="font-size:12.5px;margin-bottom:10px">Order will switch to <b>Delivered by xStore</b>: the courier collects '+EGP(m.total)+' COD and the vendor is paid net of commission. Couriers at their cash cap must deposit first.</p>'+rows);
 }
-function assignCourier(i,ci){
- ORDERS[i].courier=COURIERS[ci].n;COURIERS[ci].today++;
- toast('Order assigned to '+COURIERS[ci].n+' ✓');
- closeDrawer();go('orders');
+async function assignCourier(i,ci){
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
+ const c=COURIERS[ci];
+ const courierId=c.apiId||('demo-'+ci);
+ try{
+   await apiFetch('/api/orders/'+encodeURIComponent(m.apiId)+'/assign-courier',{method:'PUT',body:{courierId,courierName:c.n}});
+   c.today++;
+   toast('Order assigned to '+c.n+' ✓');
+   closeDrawer();loadOrders();
+ }catch(e){ if(e.status===401)return; toast('Assign failed: '+(e.message||'error')); }
 }
 
 /* ---------- delivery requests (consumer package pilot) ---------- */
@@ -568,7 +573,7 @@ function go(v){
  if(AFTER[v]) AFTER[v]();          // views backed by live data load after render
 }
 /* post-render loaders for live-data views (see LIVE API section below) */
-const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,couriers:loadCouriers,packages:loadPackages};
+const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,couriers:loadCouriers,packages:loadPackages,orders:loadOrders};
 document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>go(a.dataset.view));
 
 /* ---------- toast + moderation ---------- */
@@ -586,21 +591,21 @@ const cellTxt=(tr,i)=>tr.children[i]?tr.children[i].innerText.trim():'';
 const kv=(k,v)=>'<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>';
 const secH=t=>'<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);margin:16px 0 4px">'+t+'</h3>';
 function orderDrawer(i){
- const o=ORDERS[i];
- const items=o.items.map(it=>kv(it[0]+' × '+it[1], EGP(it[1]*it[2]))).join('');
- const steps=['Pending','Confirmed','Processing','Shipped','Delivered'];
- const cur=steps.indexOf(OSTAT[o.status][1]);
- const tl=o.status==='cancelled'
-   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled</span></div>'
-   :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+s+'</span></div>').join('');
- const canCancel=['pending','confirmed','processing'].indexOf(o.status)>-1;
- const assignBtn=courierAssignable(o)
+ const m=mapOrder((ordersState.items||[])[i]); if(!m.apiId)return;
+ const items=m.items.map(it=>kv(esc(it.listingName||'Item')+' × '+(it.quantity||1), EGP(it.total||0))).join('');
+ const steps=['pending','confirmed','processing','shipped','delivered'];
+ const cur=steps.indexOf(m.status);
+ const tl=m.status==='cancelled'||m.status==='refunded'
+   ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">'+esc(OSTAT[m.status]?OSTAT[m.status][1]:m.status)+'</span></div>'
+   :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+esc(OSTAT[s][1])+'</span></div>').join('');
+ const canCancel=['pending','confirmed','processing'].indexOf(m.status)>-1;
+ const assignBtn=courierAssignable(m)
    ?'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer();assignCourierDrawer('+i+')">Assign courier</button>':'';
- openDrawer('Order '+o.id,
-   kv('Status',OSTAT[o.status][1])+kv('Buyer (customer)',o.buyer)+kv('Phone',o.phone)+kv('Vendor (business)',o.vendor)+kv('Payment','Cash on Delivery')
-   +kv('Delivery',o.courier?'🚚 Delivered by xStore — '+o.courier:'Vendor self-delivery')
-   +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+o.addr+'</p>'
-   +secH('Items')+items+kv('<b>Total</b>','<b>'+EGP(orderTotal(o))+'</b>')
+ openDrawer('Order '+m.orderNo,
+   kv('Status',OSTAT[m.status]?OSTAT[m.status][1]:m.status)+kv('Buyer (customer)',esc(m.buyer))+kv('Phone',esc(m.phone))+kv('Vendor (business)',esc(m.vendor))+kv('Payment','Cash on Delivery')
+   +kv('Delivery',m.courierId?'🚚 Delivered by xStore — '+esc(m.courierName||''):m.deliveryMethod==='platform'?'Delivered by xStore — awaiting courier':'Vendor self-delivery')
+   +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+esc(m.addr)+'</p>'
+   +secH('Items')+items+kv('<b>Total</b>','<b>'+EGP(m.total)+'</b>')
    +secH('Fulfilment timeline')+tl,
    '<button class="btn btn-p" style="flex:1;justify-content:center" onclick="toast(\'Message sent to vendor\');closeDrawer()">Contact vendor</button>'+assignBtn
    +(canCancel?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="toast(\'Order cancelled\');closeDrawer()">Cancel order</button>':'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>'));
@@ -1083,8 +1088,8 @@ function readPage(data,pageSize){
  return{items,total,totalPages};
 }
 function pager(kind){
- const st=kind==='users'?usersState:vendorsState;
- const fn=kind==='users'?'gotoUsersPage':'gotoVendorsPage';
+ const st=kind==='users'?usersState:kind==='orders'?ordersState:vendorsState;
+ const fn=kind==='users'?'gotoUsersPage':kind==='orders'?'gotoOrdersPage':'gotoVendorsPage';
  const from=st.total===0?0:(st.page-1)*st.pageSize+1, to=Math.min(st.page*st.pageSize,st.total);
  return '<div class="pager"><span>'+from+'–'+to+' of '+st.total.toLocaleString('en-US')+'</span>'
    +'<div class="pg-btns">'
@@ -1098,6 +1103,10 @@ function onRemoteChip(kind,chip){
  if(kind==='vendors'){
    const t=VENDOR_STATUS_TABS.find(x=>x[0]===label);
    vendorsState.vendorStatus=t?t[1]:''; vendorsState.statusLabel=label; vendorsState.page=1; loadVendors();
+ }
+ if(kind==='orders'){
+   const t=ORDER_STATUS_TABS.find(x=>x[0]===label);
+   ordersState.status=t?t[1]:''; ordersState.statusLabel=label; ordersState.page=1; loadOrders();
  }
 }
 
@@ -1237,6 +1246,51 @@ async function vendorDecision(i,action){
    toast(action==='approve'?'Vendor approved — now selling ✓':'Vendor rejected — notified');
    closeDrawer(); loadVendors();
  }catch(e){ if(e.status===401)return; toast((action==='approve'?'Approve':'Reject')+' failed: '+(e.message||'error')); }
+}
+
+/* ---------- Orders (live GET /api/orders/admin) ---------- */
+const ordersState={status:'',statusLabel:'All',page:1,pageSize:20,total:0,totalPages:1,items:null};
+function gotoOrdersPage(p){if(p<1||p>ordersState.totalPages||p===ordersState.page)return;ordersState.page=p;loadOrders();}
+async function loadOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ host.innerHTML=stateLoading('Loading orders…');
+ try{
+   const data=await apiFetch('/api/orders/admin',{query:{status:ordersState.status,page:ordersState.page,pageSize:ordersState.pageSize}});
+   const p=readPage(data,ordersState.pageSize);
+   ordersState.items=p.items; ordersState.total=p.total; ordersState.totalPages=p.totalPages;
+   renderOrders();
+ }catch(e){ if(e.status===401)return; host.innerHTML=stateError(e.message,'loadOrders()'); }
+}
+function mapOrder(o){
+ if(!o)return{apiId:null};
+ const addr=o.deliveryAddress||{};
+ const status=String(o.status||'pending').toLowerCase();
+ return{
+   apiId:_fne(o.id,o.orderId,o._id),
+   orderNo:'XS-'+_fne(o.id,o.orderId,o._id),
+   buyer:_fne(o.consumerName)||'—',
+   phone:_fne(o.consumerPhone)||'—',
+   addr:[addr.street,addr.city,addr.wilaya].filter(Boolean).join(', ')||'—',
+   vendor:_fne(o.vendorStoreName,o.vendorName)||'—',
+   total:_numOr(o.total)||0,
+   status:OSTAT[status]?status:'pending',
+   deliveryMethod:String(o.deliveryMethod||'').toLowerCase(),
+   courierId:_fne(o.courierId)||null,
+   courierName:_fne(o.courierName)||null,
+   items:Array.isArray(o.items)?o.items:[]
+ };
+}
+function renderOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ const items=ordersState.items||[];
+ if(!items.length){host.innerHTML=stateEmpty('No orders with status “'+esc(ordersState.statusLabel)+'”.');return;}
+ const rows=items.map((o,i)=>{const m=mapOrder(o);
+   return `<tr data-status="${m.status}"><td><b>${esc(m.orderNo)}</b></td><td><div class="u">${avatar(m.buyer)}<b>${esc(m.buyer)}</b></div></td>
+     <td class="muted">${esc(m.vendor)}</td><td class="money">${EGP(m.total)}</td><td><span class="badge-s b-grey">COD</span></td>
+     <td>${deliveryCell(m,i)}</td>
+     <td><span class="badge-s ${OSTAT[m.status][0]}">${OSTAT[m.status][1]}</span></td><td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`;
+ }).join('');
+ host.innerHTML='<table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th class="r"></th></tr></thead><tbody>'+rows+'</tbody></table>'+pager('orders');
 }
 
 /* ---------- delegated clicks (wires every CTA) ---------- */
