@@ -220,24 +220,15 @@ function categories(){
    <div id="catHost">${stateLoading('Loading categories…')}</div>`;
 }
 
-/* which orders can still be handed to a platform courier */
-const courierAssignable=o=>!o.courier&&['confirmed','processing'].indexOf(o.status)>-1;
-function deliveryCell(o,i){
- if(o.courier) return `<span class="badge-s b-indigo" title="Delivered by xStore">🚚 ${o.courier.split(' ')[0]}</span>`;
- if(courierAssignable(o)) return `<button class="btn btn-g btn-sm" onclick="assignCourierDrawer(${i})">Assign</button>`;
- return '<span class="muted" style="font-size:12px">Vendor</span>';
-}
+/* Orders tab — live GET /api/admin/orders + detail/cancel (rows loaded by loadOrders).
+   The static ORDERS array above is kept only for the Overview "Recent orders" widget and
+   the vendor-detail page's demo "Orders" sub-tab (see demoOrderDrawer / vendorProducts). */
 function orders(){
- const rows=ORDERS.map((o,i)=>`<tr data-status="${o.status}"><td><b>${o.id}</b></td><td><div class="u">${avatar(o.buyer)}<b>${o.buyer}</b></div></td>
-   <td class="muted">${o.vendor}</td><td class="money">${EGP(orderTotal(o))}</td><td><span class="badge-s b-grey">COD</span></td>
-   <td>${deliveryCell(o,i)}</td>
-   <td><span class="badge-s ${OSTAT[o.status][0]}">${OSTAT[o.status][1]}</span></td><td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`).join('');
- return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery · 🚚 = Delivered by xStore</p></div>
-   <div class="tabs" id="ordTabs"><span class="chip active">All</span><span class="chip">Pending</span><span class="chip">Processing</span><span class="chip">Shipped</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div></div>
-   <div class="grid g-4" style="margin-bottom:18px">
-     ${kpi('box','3,482','Total orders','','up','#2E5C6E')}${kpi('chart','EGP 356','Avg order value','+3%','up','#3F7A5C')}
-     ${kpi('alert','12%','COD refusal rate','watch','down','#C68A2E')}${kpi('shield','98.1%','Fulfillment rate','+1%','up','#356F80')}</div>
-   <div class="card"><table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Delivery</th><th>Status</th><th class="r"></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+ ordersState.status='';ordersState.page=1;ordersState.items=null;
+ const tabs=ORDER_STATUS_TABS.map((t,i)=>`<span class="chip${i===0?' active':''}">${t[0]}</span>`).join('');
+ return `<div class="page-head"><div><h2>Orders</h2><p>Every order across the marketplace · payment: Cash on Delivery</p></div>
+   <div class="tabs" data-remote="orders">${tabs}</div></div>
+   <div id="ordersHost">${stateLoading('Loading orders…')}</div>`;
 }
 
 function disputes(){
@@ -337,23 +328,6 @@ function refreshCourierBadge(){
 function openCourierForm(){formDrawer('Add courier (owner-created account)',
  [{label:'Full name',ph:'Courier name',required:true},{label:'Phone',ph:'+20 1xx xxx xxxx',required:true},{label:'Zone',ph:'e.g. Cairo — Maadi',required:true}],
  'Create courier',v=>{if(DELIVERY.connected)return dlvCreateCourier(v[0],v[1],v[2]);COURIERS.push({n:v[0],phone:v[1],zone:v[2],status:'active',cash:0,cap:5000,today:0,delivered30:0,failed30:0,joined:'Jul 2026'});toast('Courier "'+v[0]+'" created ✓ — share the login with them');closeDrawer();go('couriers');});}
-function assignCourierDrawer(i){
- const o=ORDERS[i];
- const rows=COURIERS.map((c,ci)=>{
-   const off=c.status!=='active',due=cashDue(c);
-   const right=off?'<span class="badge-s b-grey">Off duty</span>'
-     :due?'<span class="badge-s b-red">Cash cap</span>'
-     :`<button class="btn btn-p btn-sm" onclick="assignCourier(${i},${ci})">Assign</button>`;
-   return `<div class="list-row">${avatar(c.n,'50')}<div style="flex:1"><b>${c.n}</b><small class="muted">${c.zone} · ${c.today} tasks today · holding ${EGP(c.cash)}</small></div>${right}</div>`;}).join('');
- openDrawer('Assign courier — '+o.id,
-   '<p class="muted" style="font-size:12.5px;margin-bottom:10px">Order will switch to <b>Delivered by xStore</b>: the courier collects '+EGP(orderTotal(o))+' COD and the vendor is paid net of commission. Couriers at their cash cap must deposit first.</p>'+rows);
-}
-function assignCourier(i,ci){
- ORDERS[i].courier=COURIERS[ci].n;COURIERS[ci].today++;
- toast('Order assigned to '+COURIERS[ci].n+' ✓');
- closeDrawer();go('orders');
-}
-
 /* ---------- delivery requests (consumer package pilot) ---------- */
 function pkgActions(p,i){
  const sug=pkgSuggest(p);
@@ -506,11 +480,13 @@ function analytics(){
 }
 
 function settings(){
+ sysSettingsState.loaded=null;
  const toggles=[['Require admin approval before products go live',true],['Require admin approval for new vendors',true],['Cash on Delivery enabled',true],['Delivered by xStore — platform couriers collect COD (pilot)',true],['Online payment gateway (Paymob/Fawry)',false],['Guest browsing (no login)',false],['Allow vendor-level coupons',false]];
  const rows=toggles.map(t=>`<div class="list-row"><div style="flex:1"><b>${t[0]}</b></div><div class="switch ${t[1]?'':'off'}" onclick="this.classList.toggle('off')"></div></div>`).join('');
  return `<div class="page-head"><div><h2>Settings</h2><p>Marketplace rules &amp; launch configuration</p></div></div>
-   <div class="split"><div class="card"><div class="c-head"><h3>Marketplace policies</h3></div><div class="c-body" style="padding-top:4px">${rows}</div></div>
-   <div class="card"><div class="c-head"><h3>Roles &amp; access</h3></div><div class="c-body">
+   <div class="card mt"><div class="c-head"><h3>Commission &amp; thresholds</h3></div><div class="c-body" id="sysSettingsHost">${stateLoading('Loading settings…')}</div></div>
+   <div class="split mt"><div class="card"><div class="c-head"><h3>Marketplace policies</h3><span class="badge-s b-grey" title="No backend endpoint exists yet">Not wired</span></div><div class="c-body" style="padding-top:4px">${rows}</div></div>
+   <div class="card"><div class="c-head"><h3>Roles &amp; access</h3><span class="badge-s b-grey" title="No backend endpoint exists yet">Not wired</span></div><div class="c-body">
      ${TEAM.map(t=>`<div class="list-row">${avatar(t[0])}<div style="flex:1"><b>${t[0]}</b><small class="muted">${t[2]}</small></div><span class="badge-s ${t[1]==='Super Admin'?'b-indigo':t[1]==='Moderator'?'b-blue':'b-grey'}">${t[1]}</span></div>`).join('')}
      <button class="btn btn-g mt" style="width:100%;justify-content:center" onclick="openInviteForm()">+ Invite team member</button></div></div></div>`;
 }
@@ -537,7 +513,7 @@ function go(v){
  if(AFTER[v]) AFTER[v]();          // views backed by live data load after render
 }
 /* post-render loaders for live-data views (see LIVE API section below) */
-const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,moderation:loadModeration,content:loadBanners};
+const AFTER={customers:loadUsers,vendors:loadVendors,categories:loadCategories,moderation:loadModeration,content:loadBanners,orders:loadOrders,settings:loadSystemSettings};
 document.querySelectorAll('#nav a').forEach(a=>a.onclick=()=>go(a.dataset.view));
 
 /* ---------- toast + moderation ---------- */
@@ -577,7 +553,9 @@ function closeDrawer(){document.getElementById('drawer').classList.remove('show'
 const cellTxt=(tr,i)=>tr.children[i]?tr.children[i].innerText.trim():'';
 const kv=(k,v)=>'<div class="kv"><span>'+k+'</span><b>'+v+'</b></div>';
 const secH=t=>'<h3 style="font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);margin:16px 0 4px">'+t+'</h3>';
-function orderDrawer(i){
+/* Demo-data order drawer — still used by the vendor-detail page's static "Orders" sub-tab
+   (vendorProducts) and left untouched otherwise; the live Orders tab uses orderDrawer() below. */
+function demoOrderDrawer(i){
  const o=ORDERS[i];
  const items=o.items.map(it=>kv(it[0]+' × '+it[1], EGP(it[1]*it[2]))).join('');
  const steps=['Pending','Confirmed','Processing','Shipped','Delivered'];
@@ -586,15 +564,13 @@ function orderDrawer(i){
    ?'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:var(--error)"></span><span style="color:var(--error)">Cancelled</span></div>'
    :steps.map((s,x)=>'<div class="list-row"><span class="dotb" style="width:11px;height:11px;background:'+(x<=cur?'var(--success)':'var(--line)')+'"></span><span style="'+(x<=cur?'':'color:var(--text-3)')+'">'+s+'</span></div>').join('');
  const canCancel=['pending','confirmed','processing'].indexOf(o.status)>-1;
- const assignBtn=courierAssignable(o)
-   ?'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer();assignCourierDrawer('+i+')">Assign courier</button>':'';
  openDrawer('Order '+o.id,
    kv('Status',OSTAT[o.status][1])+kv('Buyer (customer)',o.buyer)+kv('Phone',o.phone)+kv('Vendor (business)',o.vendor)+kv('Payment','Cash on Delivery')
    +kv('Delivery',o.courier?'🚚 Delivered by xStore — '+o.courier:'Vendor self-delivery')
    +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+o.addr+'</p>'
    +secH('Items')+items+kv('<b>Total</b>','<b>'+EGP(orderTotal(o))+'</b>')
    +secH('Fulfilment timeline')+tl,
-   '<button class="btn btn-p" style="flex:1;justify-content:center" onclick="toast(\'Message sent to vendor\');closeDrawer()">Contact vendor</button>'+assignBtn
+   '<button class="btn btn-p" style="flex:1;justify-content:center" onclick="toast(\'Message sent to vendor\');closeDrawer()">Contact vendor</button>'
    +(canCancel?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="toast(\'Order cancelled\');closeDrawer()">Cancel order</button>':'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>'));
 }
 function disputeDrawer(i){
@@ -671,7 +647,7 @@ function vendorProducts(i,tab){
      <td class="muted">${o.items.map(it=>it[0]+' ×'+it[1]).join(', ')}</td>
      <td class="money">${EGP(orderTotal(o))}</td><td><span class="badge-s b-grey">COD</span></td>
      <td><span class="badge-s ${OSTAT[o.status][0]}">${OSTAT[o.status][1]}</span></td>
-     <td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${idx})">View</button></td></tr>`).join('');
+     <td class="r"><button class="btn btn-g btn-sm" onclick="demoOrderDrawer(${idx})">View</button></td></tr>`).join('');
    const pane=vOrders.length
      ?`<div class="tabs" style="margin-bottom:16px"><span class="chip active">All (${vOrders.length})</span><span class="chip">Pending</span><span class="chip">Processing</span><span class="chip">Shipped</span><span class="chip">Delivered</span><span class="chip">Cancelled</span></div>
        <div class="card"><table><thead><tr><th>Order</th><th>Buyer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th class="r"></th></tr></thead><tbody>${rows}</tbody></table></div>`
@@ -1217,8 +1193,8 @@ function readPage(data,pageSize){
  return{items,total,totalPages};
 }
 function pager(kind){
- const st=kind==='users'?usersState:kind==='vendors'?vendorsState:modState;
- const fn=kind==='users'?'gotoUsersPage':kind==='vendors'?'gotoVendorsPage':'gotoModerationPage';
+ const st=kind==='users'?usersState:kind==='vendors'?vendorsState:kind==='orders'?ordersState:modState;
+ const fn=kind==='users'?'gotoUsersPage':kind==='vendors'?'gotoVendorsPage':kind==='orders'?'gotoOrdersPage':'gotoModerationPage';
  const from=st.total===0?0:(st.page-1)*st.pageSize+1, to=Math.min(st.page*st.pageSize,st.total);
  return '<div class="pager"><span>'+from+'–'+to+' of '+st.total.toLocaleString('en-US')+'</span>'
    +'<div class="pg-btns">'
@@ -1236,6 +1212,10 @@ function onRemoteChip(kind,chip){
  else if(kind==='moderation'){
    const t=MOD_STATUS_TABS.find(x=>x[0]===label);
    modState.status=t?t[1]:'PENDING'; modState.page=1; loadModeration();
+ }
+ else if(kind==='orders'){
+   const t=ORDER_STATUS_TABS.find(x=>x[0]===label);
+   ordersState.status=t?t[1]:''; ordersState.page=1; loadOrders();
  }
 }
 
@@ -1362,7 +1342,7 @@ function remoteVendorDrawer(i){
    +secH('Business profile')
    +kv('Owner',esc(m.owner))+kv('Category',esc(m.category))+kv('Location',esc(m.city))+kv('Joined',esc(m.joined))+kv('Products',m.products==null?'—':m.products)+kv('Rating',m.rating==null?'—':'⭐ '+m.rating)
    +secH('Contact')+kv('Phone',esc(m.phone))+(m.email?kv('Email',esc(m.email)):'')+(m.id?kv('User ID',esc(m.id)):''),
-   act);
+   act+'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="vendorCommissionDrawer('+i+')">💳 Commission wallet</button>');
 }
 function approveVendor(i){vendorDecision(i,'approve');}
 function rejectVendor(i){vendorDecision(i,'reject');}
@@ -1375,6 +1355,225 @@ async function vendorDecision(i,action){
    toast(action==='approve'?'Vendor approved — now selling ✓':'Vendor rejected — notified');
    closeDrawer(); loadVendors();
  }catch(e){ if(e.status===401)return; toast((action==='approve'?'Approve':'Reject')+' failed: '+(e.message||'error')); }
+}
+
+/* ============================================================
+   Orders (live) — "xStoreEcommerce Admin & Super Admin" Postman collection,
+   Administrator role, "Orders" folder:
+     GET  /api/admin/orders?page&pageSize&status
+     GET  /api/admin/orders/{id}
+     POST /api/admin/orders/{id}/cancel   (json: {reason})
+   status is numeric: 0=Pending,1=Confirmed,2=Processing,3=Shipped,4=Delivered,5=Cancelled.
+   The collection ships no example response body, so mapOrder() reads every field
+   defensively via _fne/_numOr, same as mapListing/mapVendor.
+   ============================================================ */
+const ORDER_STATUS_TABS=[['All',''],['Pending','0'],['Confirmed','1'],['Processing','2'],['Shipped','3'],['Delivered','4'],['Cancelled','5']];
+const OSTATN={0:['b-grey','Pending'],1:['b-blue','Confirmed'],2:['b-indigo','Processing'],3:['b-amber','Shipped'],4:['b-green','Delivered'],5:['b-red','Cancelled']};
+const ordersState={status:'',page:1,pageSize:20,total:0,totalPages:1,items:null};
+function gotoOrdersPage(p){if(p<1||p>ordersState.totalPages||p===ordersState.page)return;ordersState.page=p;loadOrders();}
+async function loadOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ host.innerHTML=stateLoading('Loading orders…');
+ try{
+   const data=await apiFetch('/api/admin/orders',{query:{status:ordersState.status,page:ordersState.page,pageSize:ordersState.pageSize}});
+   const p=readPage(data,ordersState.pageSize);
+   ordersState.items=p.items; ordersState.total=p.total; ordersState.totalPages=p.totalPages;
+   renderOrders();
+ }catch(e){ if(e.status===401)return; host.innerHTML=stateError(e.message,'loadOrders()'); }
+}
+function orderStatusBadge(raw){
+ if(raw==null||raw==='')return['b-grey','—'];
+ if(typeof raw==='number'||/^\d+$/.test(String(raw)))return OSTATN[Number(raw)]||['b-grey','Status '+raw];
+ const k=String(raw).toLowerCase();
+ return k.includes('pend')?OSTATN[0]:k.includes('confirm')?OSTATN[1]:k.includes('process')?OSTATN[2]:k.includes('ship')?OSTATN[3]:k.includes('deliver')?OSTATN[4]:k.includes('cancel')?OSTATN[5]:['b-grey',String(raw)];
+}
+function mapOrder(o){
+ const items=Array.isArray(o.items)?o.items:Array.isArray(o.orderItems)?o.orderItems:[];
+ const mappedItems=items.map(it=>({name:_fne(it.titleEn,it.title,it.productName,it.name)||'Item',qty:_numOr(it.quantity,it.qty)||1,price:_numOr(it.price,it.unitPrice)||0}));
+ return{
+   id:_fne(o.id,o.orderId,o._id),
+   code:_fne(o.orderNumber,o.code,o.id,o.orderId)||'—',
+   buyer:_fne(o.buyerName,o.customerName,o.consumerName,o.userName)||'—',
+   phone:_fne(o.phoneNumber,o.buyerPhone,o.customerPhone,o.phone)||'—',
+   addr:_fne(o.address,o.deliveryAddress,o.shippingAddress)||'—',
+   vendor:_fne(o.vendorName,o.storeNameEn,o.storeName)||'—',
+   total:_numOr(o.total,o.totalAmount,o.totalPrice,o.grandTotal),
+   items:mappedItems,
+   statusRaw:o.status,
+   status:_numOr(o.status),
+   st:orderStatusBadge(o.status)
+ };
+}
+function renderOrders(){
+ const host=document.getElementById('ordersHost'); if(!host)return;
+ const items=ordersState.items||[];
+ if(!items.length){host.innerHTML='<div class="card"><div class="c-body">'+stateEmpty('No orders found.')+'</div></div>';return;}
+ const rows=items.map((o,i)=>{const m=mapOrder(o);
+   return `<tr data-status="${esc((m.st[1]||'').toLowerCase())}"><td><b style="cursor:pointer" onclick="orderDrawer(${i})">${esc(m.code)}</b></td>
+     <td><div class="u" style="cursor:pointer" onclick="orderDrawer(${i})">${avatar(m.buyer)}<b>${esc(m.buyer)}</b></div></td>
+     <td class="muted">${esc(m.vendor)}</td>
+     <td class="money">${m.total==null?'—':EGP(m.total)}</td>
+     <td><span class="badge-s b-grey">COD</span></td>
+     <td><span class="badge-s ${m.st[0]}">${esc(m.st[1])}</span></td>
+     <td class="r"><button class="btn btn-g btn-sm" onclick="orderDrawer(${i})">View</button></td></tr>`;
+ }).join('');
+ host.innerHTML='<div class="card"><table><thead><tr><th>Order</th><th>Buyer</th><th>Vendor</th><th>Total</th><th>Payment</th><th>Status</th><th class="r"></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+pager('orders');
+}
+async function orderDrawer(i){
+ const row=(ordersState.items||[])[i]; if(!row)return;
+ let m=mapOrder(row);
+ openDrawer('Order '+esc(m.code), stateLoading('Loading order…'));
+ if(m.id){
+   try{ m=mapOrder(await apiFetch('/api/admin/orders/'+encodeURIComponent(m.id))); }
+   catch(e){ if(e.status===401)return; /* keep the list-row mapping as a fallback */ }
+ }
+ const itemsHtml=m.items.length?m.items.map(it=>kv(esc(it.name)+' × '+it.qty, EGP(it.qty*it.price))).join(''):'<p class="muted" style="font-size:13px">No item details available.</p>';
+ const canCancel=m.status===0;
+ openDrawer('Order '+esc(m.code),
+   kv('Status',esc(m.st[1]))+kv('Buyer (customer)',esc(m.buyer))+kv('Phone',esc(m.phone))+kv('Vendor (business)',esc(m.vendor))+kv('Payment','Cash on Delivery')
+   +secH('Delivery address')+'<p class="muted" style="font-size:13px">'+esc(m.addr)+'</p>'
+   +secH('Items')+itemsHtml+kv('<b>Total</b>','<b>'+(m.total==null?'—':EGP(m.total))+'</b>'),
+   (canCancel?'<button class="btn btn-no" style="flex:1;justify-content:center" onclick="cancelOrder('+i+')">Cancel order</button>':'')
+   +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+}
+async function cancelOrder(i){
+ const row=(ordersState.items||[])[i]; if(!row)return; const m=mapOrder(row);
+ if(!m.id){toast('Missing order id');return;}
+ const reason=prompt('Reason for cancelling order '+m.code+'? (shown to the buyer/vendor)','');
+ if(reason===null)return;
+ try{
+   await apiFetch('/api/admin/orders/'+encodeURIComponent(m.id)+'/cancel',{method:'POST',body:{reason}});
+   toast('Order cancelled ✓');
+   closeDrawer(); loadOrders();
+ }catch(e){ if(e.status===401)return; toast('Cancel failed: '+(e.message||'error')); }
+}
+
+/* ============================================================
+   Vendor commission wallet (live) — per-vendor, reached from remoteVendorDrawer():
+     GET   /api/admin/vendors/{id}/commission       → {outstandingEgp,warnThresholdEgp,pauseThresholdEgp}
+     PATCH /api/admin/vendors/{id}/commission        (json: {warnThresholdEgp,pauseThresholdEgp})
+     POST  /api/admin/vendors/{id}/commission/settle (json: {amountEgp} — omit body to mark fully paid)
+   Field names are unconfirmed (no example response in the collection), read defensively.
+   ============================================================ */
+function mapCommission(c){
+ return{
+   outstanding:_numOr(c.outstandingEgp,c.outstanding,c.balance,c.balanceEgp)||0,
+   warn:_numOr(c.warnThresholdEgp,c.warnThreshold,c.warn)||0,
+   pause:_numOr(c.pauseThresholdEgp,c.pauseThreshold,c.pause)||0
+ };
+}
+const commLevelLive=c=>c.outstanding>=c.pause?'paused':c.outstanding>=c.warn?'warn':'none';
+async function vendorCommissionDrawer(i){
+ const v=(vendorsState.items||[])[i]; if(!v)return; const m=mapVendor(v);
+ if(!m.id){toast('Missing vendor id');return;}
+ openDrawer('Commission — '+esc(m.store), stateLoading('Loading wallet…'));
+ try{
+   const data=await apiFetch('/api/admin/vendors/'+encodeURIComponent(m.id)+'/commission');
+   renderVendorCommissionDrawer(i,m,mapCommission(data));
+ }catch(e){ if(e.status===401)return; openDrawer('Commission — '+esc(m.store), stateError(e.message,'vendorCommissionDrawer('+i+')')); }
+}
+function renderVendorCommissionDrawer(i,m,c){
+ const lvl=commLevelLive(c);
+ const badge={none:['b-green','Healthy'],warn:['b-amber','Warn — near limit'],paused:['b-red','Paused — publishing blocked']}[lvl];
+ const banner=lvl==='none'?''
+   :`<div style="display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-radius:12px;margin-bottom:16px;background:${lvl==='paused'?'var(--error-bg)':'var(--warning-bg)'};color:${lvl==='paused'?'#8A3A24':'#7E5A14'}">
+       <span style="font-size:20px">${lvl==='paused'?'⛔':'⚠️'}</span>
+       <div><b>${lvl==='paused'?'Publishing blocked':'Approaching the pause limit'}</b>
+       <p style="font-size:12.5px;margin-top:2px">${lvl==='paused'
+         ?`This vendor owes <b>${EGP(c.outstanding)}</b> (≥ pause threshold ${EGP(c.pause)}). New listing publishes are held until the balance is paid down.`
+         :`This vendor owes <b>${EGP(c.outstanding)}</b> (≥ warn threshold ${EGP(c.warn)}). Notify them to pay before publishing is paused at ${EGP(c.pause)}.`}</p></div></div>`;
+ const owedColor=lvl==='paused'?'#B4472E':lvl==='warn'?'#C68A2E':'#2C6347';
+ const pay=c.outstanding>0
+   ?'<div class="form-row"><label>Amount received from vendor (EGP)</label><input id="vcPayAmt" inputmode="numeric" value="'+c.outstanding+'"></div>'
+     +'<div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn btn-ok" style="flex:1;justify-content:center" onclick="settleVendorCommission('+i+',false)">Record payment</button>'
+     +'<button class="btn btn-g" style="flex:1;justify-content:center" onclick="settleVendorCommission('+i+',true)">Mark fully paid</button></div>'
+   :'<div style="padding:12px 14px;background:var(--success-bg);color:#2C6347;border-radius:11px;font-size:13px;font-weight:600;margin-bottom:16px">✓ Wallet settled — nothing to collect.</div>';
+ openDrawer('Commission — '+esc(m.store),
+   '<div style="font-size:12.5px;color:var(--text-2);margin-bottom:6px">Outstanding balance</div>'
+   +'<div style="font-size:30px;font-weight:800;color:'+owedColor+';margin-bottom:12px;font-variant-numeric:tabular-nums">'+EGP(c.outstanding)+'</div>'
+   +'<span class="badge-s '+badge[0]+'">'+badge[1]+'</span>'
+   +'<div style="margin-top:16px">'+banner+'</div>'
+   +secH('Collect payment')+pay
+   +secH('Thresholds (EGP)')
+   +'<div class="form-row"><label>Warn threshold — notify vendor to pay</label><input id="vcWarnTh" inputmode="numeric" value="'+c.warn+'"></div>'
+   +'<div class="form-row"><label>Pause threshold — block new publishes</label><input id="vcPauseTh" inputmode="numeric" value="'+c.pause+'"></div>'
+   +'<p class="muted" style="font-size:12px;margin:-4px 0 4px">Pause must be ≥ warn.</p>',
+   '<button class="btn btn-p" style="flex:1;justify-content:center" onclick="saveVendorCommissionThresholds('+i+')">Save thresholds</button><button class="btn btn-g" style="flex:1;justify-content:center" onclick="closeDrawer()">Close</button>');
+}
+async function saveVendorCommissionThresholds(i){
+ const v=(vendorsState.items||[])[i]; if(!v)return; const m=mapVendor(v);
+ if(!m.id){toast('Missing vendor id');return;}
+ const warn=parseFloat(document.getElementById('vcWarnTh').value);
+ const pause=parseFloat(document.getElementById('vcPauseTh').value);
+ if(isNaN(warn)||warn<0){toast('Enter a valid warn threshold');document.getElementById('vcWarnTh').focus();return;}
+ if(isNaN(pause)||pause<0){toast('Enter a valid pause threshold');document.getElementById('vcPauseTh').focus();return;}
+ if(pause<warn){toast('Pause threshold must be ≥ warn threshold');document.getElementById('vcPauseTh').focus();return;}
+ try{
+   await apiFetch('/api/admin/vendors/'+encodeURIComponent(m.id)+'/commission',{method:'PATCH',body:{warnThresholdEgp:warn,pauseThresholdEgp:pause}});
+   toast('Commission thresholds saved ✓');
+   vendorCommissionDrawer(i);
+ }catch(e){ if(e.status===401)return; toast('Save failed: '+(e.message||'error')); }
+}
+async function settleVendorCommission(i,full){
+ const v=(vendorsState.items||[])[i]; if(!v)return; const m=mapVendor(v);
+ if(!m.id){toast('Missing vendor id');return;}
+ let amountEgp;
+ if(!full){
+   amountEgp=parseFloat(document.getElementById('vcPayAmt').value);
+   if(isNaN(amountEgp)||amountEgp<=0){toast('Enter a valid amount');document.getElementById('vcPayAmt').focus();return;}
+ }
+ try{
+   await apiFetch('/api/admin/vendors/'+encodeURIComponent(m.id)+'/commission/settle',{method:'POST',body:full?{}:{amountEgp}});
+   toast(full?'Payment recorded — wallet settled ✓':'Payment recorded ✓');
+   vendorCommissionDrawer(i);
+ }catch(e){ if(e.status===401)return; toast('Payment failed: '+(e.message||'error')); }
+}
+
+/* ============================================================
+   System Settings (live) — platform-wide defaults, distinct from the per-vendor
+   commission wallet overrides above:
+     GET /api/admin/system-settings → {commissionValueOnOrder,warnThresholdEgp,pauseThresholdEgp}
+     PUT /api/admin/system-settings  (same shape)
+   ============================================================ */
+const sysSettingsState={loaded:null};
+async function loadSystemSettings(){
+ const host=document.getElementById('sysSettingsHost'); if(!host)return;
+ host.innerHTML=stateLoading('Loading settings…');
+ try{
+   const data=await apiFetch('/api/admin/system-settings');
+   sysSettingsState.loaded={
+     commission:_numOr(data.commissionValueOnOrder,data.commissionValue,data.commission)||0,
+     warn:_numOr(data.warnThresholdEgp,data.warnThreshold)||0,
+     pause:_numOr(data.pauseThresholdEgp,data.pauseThreshold)||0
+   };
+   renderSystemSettings();
+ }catch(e){ if(e.status===401)return; host.innerHTML=stateError(e.message,'loadSystemSettings()'); }
+}
+function renderSystemSettings(){
+ const host=document.getElementById('sysSettingsHost'); if(!host)return;
+ const s=sysSettingsState.loaded; if(!s)return;
+ host.innerHTML=
+   '<div class="form-row"><label>Commission on order (%)</label><input id="sysCommission" inputmode="decimal" value="'+s.commission+'"></div>'
+   +'<div class="form-row"><label>Warn threshold (EGP)</label><input id="sysWarnTh" inputmode="numeric" value="'+s.warn+'"></div>'
+   +'<div class="form-row"><label>Pause threshold (EGP)</label><input id="sysPauseTh" inputmode="numeric" value="'+s.pause+'"></div>'
+   +'<p class="muted" style="font-size:12px;margin:-4px 0 14px">Platform-wide default — a vendor\'s own Commission wallet can override these.</p>'
+   +'<button class="btn btn-p" id="sysSaveBtn" style="width:100%;justify-content:center" onclick="saveSystemSettings()">Save changes</button>';
+}
+async function saveSystemSettings(){
+ const commission=parseFloat(document.getElementById('sysCommission').value);
+ const warn=parseFloat(document.getElementById('sysWarnTh').value);
+ const pause=parseFloat(document.getElementById('sysPauseTh').value);
+ if(isNaN(commission)||commission<0){toast('Enter a valid commission value');document.getElementById('sysCommission').focus();return;}
+ if(isNaN(warn)||warn<0){toast('Enter a valid warn threshold');document.getElementById('sysWarnTh').focus();return;}
+ if(isNaN(pause)||pause<0){toast('Enter a valid pause threshold');document.getElementById('sysPauseTh').focus();return;}
+ if(pause<warn){toast('Pause threshold must be ≥ warn threshold');document.getElementById('sysPauseTh').focus();return;}
+ const btn=document.getElementById('sysSaveBtn'); if(btn){btn.disabled=true;btn.textContent='Saving…';}
+ try{
+   await apiFetch('/api/admin/system-settings',{method:'PUT',body:{commissionValueOnOrder:commission,warnThresholdEgp:warn,pauseThresholdEgp:pause}});
+   toast('System settings saved ✓');
+   sysSettingsState.loaded={commission,warn,pause};
+   renderSystemSettings();
+ }catch(e){ if(e.status===401)return; toast('Save failed: '+(e.message||'error')); if(btn){btn.disabled=false;btn.textContent='Save changes';} }
 }
 
 /* ---------- delegated clicks (wires every CTA) ---------- */

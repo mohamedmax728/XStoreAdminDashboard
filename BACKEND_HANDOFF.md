@@ -7,12 +7,33 @@ not the real xStoreEcommerce contract. This doc lists the endpoints and payload 
 dashboard expects so the backend can wire it up.
 
 **Actually live today** (real `xStoreEcommerce` paths, not the `/admin/*` ones documented
-below — see the "LIVE API INTEGRATION" comment blocks in `app.js` for the exact paths/shapes
-in use): Users/Vendors list + approve/reject, Categories CRUD, Product Moderation
+below — see the "LIVE API INTEGRATION" / live-section comment blocks in `app.js` for the exact
+paths/shapes in use): Users/Vendors list + approve/reject, Categories CRUD, Product Moderation
 (GET/approve/reject/hot-deal via `/api/admin/listings/...`), Content & Banners CRUD via
-`/api/banners`, admin login/get-profile/logout. Everything else below (Orders, Disputes,
-Coupons, Analytics, Settings, Commission settlement, push broadcast) is still a UI stub with
-no backend endpoint.
+`/api/banners`, admin login/get-profile/logout, **Orders** (list/detail/cancel via
+`/api/admin/orders/...`), the **per-vendor commission wallet** (`GET`/`PATCH`
+`/api/admin/vendors/{id}/commission` + `POST .../commission/settle`, reached from the vendor
+drawer's "💳 Commission wallet" button), and platform-wide **System Settings**
+(`GET`/`PUT /api/admin/system-settings`). Everything else below (Disputes, Coupons, Analytics,
+marketplace policy toggles, team/roles, push broadcast) is still a UI stub with no backend
+endpoint.
+
+> **Auth caveat for Orders / commission wallet / System Settings.** Their **paths** come from
+> the "xStoreEcommerce Admin & Super Admin" Postman collection (Administrator role), but that
+> collection's requests carry both an `Authorization: Bearer` header *and* an `X-Auth-Token`
+> header. The hosted backend actually in use (`https://xstoreegy-001-site1.jtempurl.com`) is
+> confirmed — via the already-working Users/Vendors/Categories/Moderation/Banners calls in
+> `apiFetch()` — to accept **Bearer-only** auth, with no `X-Auth-Token`. These three new
+> integrations deliberately combine the collection's *paths* with the confirmed-live
+> *Bearer-only* auth scheme, rather than blindly copying either spec end-to-end. That
+> combination is **unverified against a real server** — no admin credentials were available to
+> test with while making this change. If Orders, the commission wallet, or System Settings
+> start returning 401/404 once tested against a real login, check whether the backend actually
+> requires the extra `X-Auth-Token` header before assuming the request paths are wrong.
+>
+> Order-to-courier assignment remains unwired — the Postman collection has no confirmed
+> endpoint for it. (A separate, abandoned branch once called `/api/orders/{id}/assign-courier`,
+> but that path is unconfirmed and used the old broken dual-auth scheme; don't resurrect it.)
 
 Base path assumed: `/admin` (admin-authenticated). Currency is EGP, payment is Cash on Delivery.
 
